@@ -8,18 +8,20 @@ YearStart <- 2021
 
 #Assigning Variables
 model_inputs <- read_excel(FileName, sheet = 'Main')
-MeritIncreases <- model_inputs[,6]
+SalaryIncreases <- model_inputs[,6]
 for(i in 1:nrow(model_inputs)){
   if(!is.na(model_inputs[i,2])){
     assign(as.character(model_inputs[i,2]),as.double(model_inputs[i,3]))
   }
 }
 
-#Function for determining retirement eligibility
+#Function for determining retirement eligibility (including normal retirement, unreduced early retirement, and reduced early retirement)
 IsRetirementEligible <- function(Age, YOS){
-  Check = ifelse((Age >= NormalRetAgeI & YOS >= Vesting) |      
-                 (Age >= NormalRetAgeII & YOS >= NormalYOSII) | 
-                 (Age + YOS) >= ReduceRetAge, TRUE, FALSE)
+  Check = ifelse((Age >= NormalRetAgeI & YOS >= Vesting) |
+                   YOS >= 30 |
+                   (Age >= NormalRetAgeII & YOS >= NormalYOSII) | 
+                   (Age + YOS) >= ReduceRetAge |
+                   (Age >= 60 & YOS >= 10), TRUE, FALSE)
   return(Check)
 }
 
@@ -31,7 +33,7 @@ FemaleMortality <- read_excel(FileName, sheet = 'MP-2020_Female') %>% select(Age
 SurvivalRates <- read_excel(FileName, sheet = 'Mortality Rates')
 
 #Expand grid for ages 25-120 and years 2009 to 2019
-SurvivalMale <- expand_grid(25:120,2009:2129)
+SurvivalMale <- expand_grid(22:120,2009:2129)
 colnames(SurvivalMale) <- c('Age','Years')
 SurvivalMale$Value <- 0
 #Join these tables to make the calculations easier

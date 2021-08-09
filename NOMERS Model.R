@@ -26,45 +26,60 @@ IsRetirementEligible <- function(Age, YOS){
 }
 
 #These rates dont change so they're outside the function
-#Mortality Rates
-#2033 is the Age for the MP-2017 rates
-MaleMortality <- read_excel(FileName, sheet = 'MP-2020_Male') %>% select(Age,'2036')
-FemaleMortality <- read_excel(FileName, sheet = 'MP-2020_Female') %>% select(Age,'2036')
+#Import base mortality rates and mortality improvement rates
 SurvivalRates <- read_excel(FileName, sheet = 'Mortality Rates')
 
-#Expand grid for ages 25-120 and years 2009 to 2019
-SurvivalMale <- expand_grid(22:120,2009:2129)
-colnames(SurvivalMale) <- c('Age','Years')
-SurvivalMale$Value <- 0
-#Join these tables to make the calculations easier
-SurvivalMale <- left_join(SurvivalMale,SurvivalRates,by = 'Age')
-SurvivalMale <- left_join(SurvivalMale,MaleMortality,by = 'Age') %>% group_by(Age) %>% 
-  #MPValue2 is the cumulative product of the MP-2020 value for year 2036. We use it later so make life easy and calculate now
-  mutate(MPValue2 = cumprod(1-lag(`2036`,2,default = 0)),
-         Value = ifelse(Age == 120, 1,
-                        ifelse(Age < NormalRetAgeII & Years == 2010, `Pub-2010 Employee Male Teachers`,
-                               ifelse(Age >= NormalRetAgeII & Years == 2010, `Pub-2010 Non-disabled Male Teachers` * ScaleMultiple,
-                                      ifelse(Age < NormalRetAgeII & Years > 2010, `Pub-2010 Employee Male Teachers` * MPValue2,
-                                             ifelse(Age >= NormalRetAgeII & Years > 2010, `Pub-2010 Non-disabled Male Teachers` * ScaleMultiple * MPValue2, 0))))))
-#filter out the necessary variables
-SurvivalMale <- SurvivalMale %>% select('Age','Years','Value') %>% ungroup()
+MaleMP <- read_excel(FileName, sheet = 'MP-2020_Male')
+MaleMP <- MaleMP %>% 
+  pivot_longer(-Age, names_to = "Years", values_to = "MP_male") %>% 
+  mutate(Years = as.numeric(Years))
 
-#Expand grid for ages 25-120 and years 2009 to 2019
-SurvivalFemale <- expand_grid(25:120,2009:2129)
-colnames(SurvivalFemale) <- c('Age','Years')
-SurvivalFemale$Value <- 0
-#Join these tables to make the calculations easier
-SurvivalFemale <- left_join(SurvivalFemale,SurvivalRates,by = 'Age')
-SurvivalFemale <- left_join(SurvivalFemale,FemaleMortality,by = 'Age') %>% group_by(Age) %>% 
-  #MPValue2 is the cumulative product of the MP-2020 value for year 2036. We use it later so make life easy and calculate now
-  mutate(MPValue2 = cumprod(1-lag(`2036`,2,default = 0)),
-         Value = ifelse(Age == 120, 1,
-                        ifelse(Age < NormalRetAgeII & Years == 2010, `Pub-2010 Employee Female Teachers`,
-                               ifelse(Age >= NormalRetAgeII & Years == 2010, `Pub-2010 Non-disabled Female Teachers`,
-                                      ifelse(Age < NormalRetAgeII & Years > 2010, `Pub-2010 Employee Female Teachers` * MPValue2,
-                                             ifelse(Age >= NormalRetAgeII & Years > 2010, `Pub-2010 Non-disabled Female Teachers` * MPValue2, 0))))))
+MaleMP_ultimate <- MaleMP %>% 
+  filter(Years == max(Years)) %>% 
+  rename(MP_ultimate_male = MP_male) %>% 
+  select(-Years)
+
+FemaleMP <- read_excel(FileName, sheet = 'MP-2020_Female')
+FemaleMP <- FemaleMP %>% 
+  pivot_longer(-Age, names_to = "Years", values_to = "MP_female") %>% 
+  mutate(Years = as.numeric(Years))
+
+FemaleMP_ultimate <- FemaleMP %>% 
+  filter(Years == max(Years)) %>% 
+  rename(MP_ultimate_female = MP_female) %>% 
+  select(-Years)
+
+##Mortality calculations
+#Expand grid for ages 20-120 and years 2010 to 2110
+MortalityTable <- expand_grid(20:120,2010:2110)
+colnames(MortalityTable) <- c('Age','Years')
+
+#Join base mortality table with mortality improvement table and calculate the final mortality rates
+MortalityTable <- MortalityTable %>% 
+  left_join(SurvivalRates, by = "Age") %>% 
+  left_join(MaleMP, by = c("Age", "Years")) %>% 
+  left_join(FemaleMP, by = c("Age", "Years")) %>% 
+  left_join(MaleMP_ultimate, by = "Age") %>% 
+  left_join(FemaleMP_ultimate, by = "Age") %>% 
+  mutate(MaleMP_final = ifelse(Years <= max(MaleMP$Years), MP_male, MP_ultimate_male),
+         FemaleMP_final = ifelse(Years <= max(FemaleMP$Years), MP_female, MP_ultimate_female),
+         entry_age = Age - (Years - YearStart),
+         YOS = Age - entry_age) %>% 
+  group_by(Age) %>% 
+  #MPcumprod is the cumulative product of (1 - MP rates), starting from 2011. We use it later so make life easy and calculate now
+  mutate(MPcumprod_male = cumprod(1 - MaleMP_final)/(1 - MaleMP_final[Years == 2010]),
+         MPcumprod_female = cumprod(1 - FemaleMP_final)/(1 - FemaleMP_final[Years == 2010]),
+         mort_male = ifelse(IsRetirementEligible(Age, YOS) == F, PubG_2010_employee_male * MPcumprod_male,
+                            PubG_2010_healthy_retiree_male * MPcumprod_male),
+         mort_female = ifelse(IsRetirementEligible(Age, YOS) == F, PubG_2010_employee_female * MPcumprod_female,
+                              PubG_2010_healthy_retiree_female * MPcumprod_female)) %>% 
+  filter(Years >= 2021,
+         entry_age >= 20)
+
 #filter out the necessary variables
-SurvivalFemale <- SurvivalFemale %>% select('Age','Years','Value') %>% ungroup()
+MortalityTable <- MortalityTable %>% select(Age, Years, entry_age, mort_male, mort_female) %>% 
+  arrange(entry_age) %>% 
+  ungroup()
 
 #Separation Rates
 SeparationRates <- expand_grid(25:80,0:55)
